@@ -3,80 +3,83 @@
 #include <cmath>
 #include <cstddef>
 #include <cstring>
+#include <iostream>
 #include <memory.h>
 #include <memory>
+#include <new>
 #include <expected>
-#include <system_error>
 
-namespace memory_allocator
-{
-    class IAllocator
-    {
-        virtual void* alloc() = 0;
+namespace memory_allocator {
+    template <typename T>
+    class IAllocator {
+        virtual T* alloc() = 0;
         virtual void dealloc() = 0;
         virtual ~IAllocator() = default;
     };
 
     template <typename T>
-    class ArenaAllocator : public IAllocator
-    {
-        private:
-            T* memory_pool;
-            T* pointer;                     // pointer to the next free memory
-            std::size_t memory_capacity;    // total memory allocated in bytes
-            std::size_t memory_size;        // how much data is stored in bytes
-            std::size_t growth_multiplier;  // how much to grow the memory pool
-
-        public:
-            ArenaAllocator(std::size_t reserve = sizeof(T), std::size_t growth = 1)
-                : memory_pool(new T[reserve]), growth_multiplier(growth), pointer(memory_pool) { }
-
-            ~ArenaAllocator() { delete[] memory_pool; }
-    
-            /*
-             * allocates memory to the memory pool.
-             *
-             * the way it works is that it holds a very large
-             * memory pool to allocate memory super quickly to.
-             * 
-             * if the pool runs out of memory then it reallocates to a larger
-             * size.
-            */
-            T* alloc(std::size_t elements = sizeof(T)) override
-            {
-                if (memory_size + elements > memory_capacity - sizeof(T)) [[unlikely]]
-                {
-                    std::unique_ptr<T> temporary = std::make_unique<T>(memory_size);
-                    std::memcpy(
-                        temporary,
-                        memory_pool,
-                        memory_size
-                    );
-
-                    // whenever we run out of memory we allocate more according to the following formula
-                    // newsize = (oldsize + insertedelementssize) * growth multiplier
-                    // and we square the growth multiplier.
-                    delete[] memory_pool;
-                    memory_pool = new T[(memory_capacity + elements) * growth_multiplier];
-                    growth_multiplier = std::pow(growth_multiplier, 2);
-
-                    std::memcpy(
-                        memory_pool,
-                        temporary,
-                        memory_size
-                    );
-                }
-
-                T* allocated = new (pointer) T[elements];
-                return allocated;
+    class ArenaAllocator : public IAllocator<T> {
+    public:
+        explicit ArenaAllocator(size_t element_count, size_t rescale)
+            : rescale(rescale), allocated(element_count) {
+            try {
+                memory = new T[element_count];
+            } catch (const std::bad_alloc& e) {
+                std::cerr << e.what() << " : bad alloc in ArenaAllocator : IAllocator";
+                throw;
             }
+        }
 
-            std::expected<void, std::error_code> dealloc(T* ptr) override
-            {
-                if (ptr < memory_pool || ptr > memory_pool + memory_capacity)
-                    return std::unexpected(std::make_error_code(std::errc::address_not_available));
+        std::expected<T*, const std::bad_alloc&> alloc(size_t count) override {
+            if (count + amount >= allocated)
+                resize_memory();
 
-                delete[] ptr;
+            try {
+                T* object = new(current_slot) T[count]; // allocate at the next free slot
+                amount++;
+                return object;
+            } catch (const std::bad_alloc& e) {
+                std::cerr << e.what();
+                return std::unexpected(e);
             }
+        }
+
+    private:
+        T* memory;
+        T* current_slot;     // pointer to the current free slot
+        size_t allocated;   // how many elements are allocated
+        size_t amount;      // how many elements exist in the arena
+        const size_t rescale;     // the rate at which memory grows in the arena
+
+        ~ArenaAllocator() {
+            try {
+                delete[] memory;
+            } catch (const std::bad_alloc& e) {
+                std::cerr << e.what();
+                throw;
+            }
+        }
+
+        void resize_memory() {
+            // move memory to a temporary location then reallocate to increase size and copy into the new location
+            std::unique_ptr<T> temporary_memory = std::make_unique<T>(amount);
+
+            std::memcpy(
+                temporary_memory.get(),
+                memory,
+                amount * sizeof(T)
+            );
+
+            delete[] memory;
+            memory = new T[std::floor(allocated * rescale)];
+
+            allocated = std::floor(allocated * rescale);
+
+            std::memcpy(
+                memory,
+                temporary_memory.get(),
+                amount * sizeof(T)
+            );
+        }
     };
 }
