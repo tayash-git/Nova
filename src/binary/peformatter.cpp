@@ -3,11 +3,14 @@
 #include <cstring>
 #include <minwindef.h>
 #include <span>
+#include <unordered_map>
 #include <vector>
 #include <windows.h>
 #include <winnt.h>
 
 #include "../../include/binary/peformatter.hpp"
+#include "../../include/binary/peformatter_headers.hpp"
+#include "../../include/binary/peformatter_details.hpp"
 #include "../../include/config/config.hpp"
 #include "../../include/utility.hpp"
 
@@ -32,35 +35,34 @@ namespace peformatter
     }
 
     IMAGE_OPTIONAL_HEADER64 generate_optional_header(
-        const std::vector<std::uint8_t>& code_section,
-        const std::vector<std::uint8_t>& data_section,
-        const std::vector<std::uint8_t>& rdata_section,
-        const std::vector<std::uint8_t>& bss_section,
+        const std::unordered_map<details::PESectionNames, IMAGE_SECTION_HEADER>& section_headers,
         const DWORD entry_point_rva,
         const std::size_t size_of_sections_data,
         const std::size_t size_of_headers
     )
     {
-        const std::size_t total_sections_size = align_up(code_section.size(), SECTION_ALIGNMENT) +
-            align_up(data_section.size(), SECTION_ALIGNMENT) + align_up(rdata_section.size(), SECTION_ALIGNMENT) +
-            align_up(bss_section.size(), SECTION_ALIGNMENT);
+        IMAGE_SECTION_HEADER text_section = section_headers.at(details::PESectionNames::Text);
+        IMAGE_SECTION_HEADER data_section = section_headers.at(details::PESectionNames::Data);
+        IMAGE_SECTION_HEADER rdata_section = section_headers.at(details::PESectionNames::RData);
+        IMAGE_SECTION_HEADER bss_section = section_headers.at(details::PESectionNames::Bss);
+        IMAGE_SECTION_HEADER idata_section = section_headers.at(details::PESectionNames::IData);
 
         IMAGE_OPTIONAL_HEADER64 optional_header{};
 
         optional_header.Magic =                     IMAGE_NT_OPTIONAL_HDR64_MAGIC;
         optional_header.MajorLinkerVersion =        0;                              // completely optional
         optional_header.MinorLinkerVersion =        0;                              // completely optional
-                                                                                    //
-        optional_header.SizeOfCode =                code_section.size();            // size of the code section in bytes
-        optional_header.SizeOfUninitializedData =   data_section.size() + rdata_section.size();
-        optional_header.SizeOfInitializedData =     bss_section.size();
+
+        optional_header.SizeOfCode =                text_section.Misc.VirtualSize;
+        optional_header.SizeOfInitializedData =     data_section.Misc.VirtualSize + rdata_section.Misc.VirtualSize + idata_section.Misc.VirtualSize;
+        optional_header.SizeOfUninitializedData =   bss_section.Misc.VirtualSize;
 
         optional_header.AddressOfEntryPoint =       entry_point_rva;                // address of the first instruction that runs
         optional_header.BaseOfCode =                entry_point_rva;                // address from base address to the .code section
         optional_header.ImageBase =                 IMAGE_BASE_ADDRESS;
-        optional_header.SectionAlignment =          SECTION_ALIGNMENT;      // how the sections are aligned
-        optional_header.FileAlignment =             FILE_ALIGNMENT;         // how the executable is aligned as a file
-                                                                            //
+        optional_header.SectionAlignment =          SECTION_ALIGNMENT;              // how the sections are aligned
+        optional_header.FileAlignment =             FILE_ALIGNMENT;                 // how the executable is aligned as a file
+
         optional_header.MajorOperatingSystemVersion = 6;                            // the operating system version required
         optional_header.MinorOperatingSystemVersion = 0;                            // v6.0
         optional_header.MajorImageVersion =         1;                              // version of the program (v1.0) linker doesnt care about this
@@ -68,9 +70,9 @@ namespace peformatter
         optional_header.MajorSubsystemVersion =     6;                              // the subsystem version can get wonky. v6.0 like we did is fine
         optional_header.MinorSubsystemVersion =     0;
         optional_header.Win32VersionValue =         0;                              // Must be 0
-                                                                                    //
-        optional_header.SizeOfImage =               align_up(size_of_headers, SECTION_ALIGNMENT) + total_sections_size; // ill also add size of sections later (ALL INDIVIDUAL SCETIONS MUST BE ALIGNED INDIVUDUALLY)
-        optional_header.SizeOfHeaders =             align_up(size_of_headers, SECTION_ALIGNMENT);
+ 
+        optional_header.SizeOfImage =               align_up(details::get_image_size(section_headers), SECTION_ALIGNMENT);
+        optional_header.SizeOfHeaders =             align_up(details::get_header_sizes(4), FILE_ALIGNMENT);
         optional_header.CheckSum =                  0;                              // only needed for drivers
         optional_header.Subsystem =                 IMAGE_SUBSYSTEM_WINDOWS_CUI;
         optional_header.DllCharacteristics =        OPTIONAL_HEADER_DLL_CHARACTERISTICS; // dll characteristics for the sake of security
