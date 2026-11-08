@@ -1,6 +1,6 @@
 #pragma once
 
-#include <stdexcept>
+#include <cstddef>
 namespace memoryallocator {
     struct DestructorNodeBase {
         DestructorNodeBase* previous = nullptr;

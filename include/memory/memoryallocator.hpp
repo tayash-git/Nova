@@ -3,10 +3,12 @@
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
+#include <iostream>
 #include <memory.h>
 #include <memory>
 #include <memoryapi.h>
 #include <expected>
+#include <stdexcept>
 #include <type_traits>
 #include <winnt.h>
 
@@ -39,18 +41,24 @@ namespace memoryallocator {
                 PAGE_NOACCESS
             ));
 
-            VirtualAlloc(
+            if (!memory) [[unlikely]]
+                throw std::runtime_error("bad reserve in ArenaAllocator : IAllocator constructor\n");
+
+            auto ok = VirtualAlloc(
                 reinterpret_cast<LPVOID>(memory),
                 ALLOCATOR_COMMIT_SIZE,
                 MEM_COMMIT,
                 PAGE_READWRITE
             );
 
+            if (!ok) [[unlikely]]
+                throw std::runtime_error("bad commit in ArenaAllocator : IAllocator constructor\n");
+
             free_slot = memory;
         }
 
         template<typename T = void>
-        std::expected<T*, MemoryAllocationError> allocate(size_t amount) {
+        std::expected<T*, MemoryAllocationError> allocate(size_t amount) noexcept {
             short alignment = alignof(T);
             size_t byte_count = sizeof(T) * amount;
             auto allocated_memory = alloc(byte_count, alignment);
@@ -68,7 +76,7 @@ namespace memoryallocator {
         size_t size;                // how many bytes were allocated
         DestructorNodeBase* recent_obj_node = nullptr;        // most recent node holding an allocated object
 
-        ~ArenaAllocator() {
+        ~ArenaAllocator() override {
             // delete all allocated trivially destructible objects
             while (recent_obj_node != nullptr) {
                 DestructorNodeBase* temporary_previous = recent_obj_node->previous;
@@ -85,7 +93,7 @@ namespace memoryallocator {
 
         // allocates memory and constructs 'Count' objects (accepts constructor arguments)
         template <typename T, typename... Args>
-        std::expected<T*, MemoryAllocationError> construct_resource(size_t count, Args&&... args) {
+        std::expected<T*, MemoryAllocationError> construct_resource(size_t count, Args&&... args) noexcept {
             if (count < 1) [[unlikely]]
                 return std::unexpected(MemoryAllocationError::BadAllocation);
 
@@ -98,10 +106,11 @@ namespace memoryallocator {
                 new (allocated_memory.value() + i) T(args...);
             }
 
-            // check if the allocated object is a class
+            // check if the allocated object is trivially destructible
             if constexpr (std::is_trivially_destructible_v<T>) {
                 return allocated_memory.value();
             } else {
+                // if not it's an object that should be destructed
                 auto node_allocated = allocate<DestructorNode<T>>(1);
 
                 if (!node_allocated) [[unlikely]]
@@ -114,11 +123,9 @@ namespace memoryallocator {
 
                 return allocated_memory.value();
             }
-
-            // ill review this tomorrow
         }
 
-        std::expected<LPVOID, MemoryAllocationError> alloc(size_t bytes, short alignment) override {
+        std::expected<LPVOID, MemoryAllocationError> alloc(size_t bytes, short alignment) noexcept override {
             uintptr_t free_slot_aligned = utility::align_up(free_slot, alignment);
 
             // attempt to resize memory if there's not enough
@@ -127,11 +134,13 @@ namespace memoryallocator {
                     return std::unexpected(ok.error());
             }
 
+            free_slot = free_slot_aligned + bytes;
+
             return reinterpret_cast<LPVOID>(free_slot_aligned);
         }
 
         // commits 'capacity' bytes and doubles capacity
-        std::expected<void, MemoryAllocationError> resize_memory() {
+        std::expected<void, MemoryAllocationError> resize_memory() noexcept {
             if (!enough_memory_for_reserve()) [[unlikely]]
                 return std::unexpected(MemoryAllocationError::OutOfMemory);
 
