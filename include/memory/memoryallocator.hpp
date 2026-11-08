@@ -1,73 +1,164 @@
 #pragma once
 
-#include <cmath>
 #include <cstddef>
+#include <cstdlib>
 #include <cstring>
-#include <iostream>
 #include <memory.h>
 #include <memory>
 #include <memoryapi.h>
-#include <new>
 #include <expected>
+#include <type_traits>
 #include <winnt.h>
 
+#include "../utility.hpp"
 #include "../config/config.hpp"
 #include "memoryallocator_errors.hpp"
+#include "memoryallocator_object_tracker.hpp"
 
 // Switching to VirtualAlloc later on to allow for committing and reserving memory giving more control.
 
 using namespace config;
 
 namespace memoryallocator {
-    template <typename T>
     class IAllocator {
-        virtual std::expected<T*, MemoryAllocationError> alloc() = 0;
+    protected:
+        virtual std::expected<LPVOID, MemoryAllocationError> alloc(size_t bytes, short alignment) = 0;
+        virtual void dealloc(LPVOID pointer) = 0;
         virtual ~IAllocator() = default;
     };
 
-    template <typename T>
-    class ArenaAllocator : public IAllocator<T> {
+    class ArenaAllocator : public IAllocator {
     public:
-        explicit ArenaAllocator() {
-            memory = VirtualAlloc(
+        explicit ArenaAllocator()
+            : capacity(ALLOCATOR_COMMIT_SIZE) {
+            // reserves a huge amount of contigous memory totaling 16GB
+            memory = reinterpret_cast<uintptr_t>(VirtualAlloc(
                 NULL,
                 ALLOCATOR_RESERVE_SIZE,
                 MEM_RESERVE,
                 PAGE_NOACCESS
-            );
+            ));
 
             VirtualAlloc(
-                memory,
+                reinterpret_cast<LPVOID>(memory),
                 ALLOCATOR_COMMIT_SIZE,
                 MEM_COMMIT,
                 PAGE_READWRITE
             );
+
+            free_slot = memory;
         }
 
-        std::expected<T*, MemoryAllocationError> alloc(size_t count) override {
-            if (count + amount >= allocated)
-                resize_memory();
+        template<typename T = void>
+        std::expected<T*, MemoryAllocationError> allocate(size_t amount) {
+            short alignment = alignof(T);
+            size_t byte_count = sizeof(T) * amount;
+            auto allocated_memory = alloc(byte_count, alignment);
 
-            // implement virtual alloc commit
+            if (!allocated_memory) [[unlikely]]
+                return std::unexpected(allocated_memory.error());
+            else [[likely]]
+                return allocated_memory.value();
         }
 
     private:
-        T* memory;
-        T* current_slot;     // pointer to the current free slot
-        size_t allocated;   // how many elements are allocated
-        size_t amount;      // how many elements exist in the arena
+        uintptr_t memory;           // the address where the reserve starts
+        uintptr_t free_slot;        // pointer to the next free slot
+        size_t capacity;            // how many bytes fit in the current committed amount
+        size_t size;                // how many bytes were allocated
+        DestructorNodeBase* recent_obj_node = nullptr;        // most recent node holding an allocated object
 
         ~ArenaAllocator() {
-            try {
-                delete[] memory;
-            } catch (const std::bad_alloc& e) {
-                std::cerr << e.what();
-                throw;
+            // delete all allocated trivially destructible objects
+            while (recent_obj_node != nullptr) {
+                DestructorNodeBase* temporary_previous = recent_obj_node->previous;
+                recent_obj_node->~DestructorNodeBase();
+                recent_obj_node = temporary_previous;
             }
+
+            VirtualFree(
+                reinterpret_cast<LPVOID>(memory),
+                0,
+                MEM_RELEASE
+            );
         }
 
-        void resize_memory() {
-            // use virtualalloc to commit more memory
+        // allocates memory and constructs 'Count' objects (accepts constructor arguments)
+        template <typename T, typename... Args>
+        std::expected<T*, MemoryAllocationError> construct_resource(size_t count, Args&&... args) {
+            if (count < 1) [[unlikely]]
+                return std::unexpected(MemoryAllocationError::BadAllocation);
+
+            auto allocated_memory = allocate<T>(count);
+
+            if (!allocated_memory) [[unlikely]]
+                return std::unexpected(MemoryAllocationError::BadAllocation);
+
+            for (auto i{0uz}; i < count; ++i) {
+                new (allocated_memory.value() + i) T(args...);
+            }
+
+            // check if the allocated object is a class
+            if constexpr (std::is_trivially_destructible_v<T>) {
+                return allocated_memory.value();
+            } else {
+                auto node_allocated = allocate<DestructorNode<T>>(1);
+
+                if (!node_allocated) [[unlikely]]
+                    return std::unexpected(MemoryAllocationError::BadAllocation);
+
+                DestructorNodeBase* node = new (node_allocated.value()) DestructorNode<T>(allocated_memory.value(), count);
+                node->previous = recent_obj_node;
+
+                recent_obj_node = node;
+
+                return allocated_memory.value();
+            }
+
+            // ill review this tomorrow
+        }
+
+        std::expected<LPVOID, MemoryAllocationError> alloc(size_t bytes, short alignment) override {
+            uintptr_t free_slot_aligned = utility::align_up(free_slot, alignment);
+
+            // attempt to resize memory if there's not enough
+            while (!enough_memory_for_commit(free_slot_aligned, bytes)) [[unlikely]] {
+                if (auto ok = resize_memory(); !ok) [[unlikely]]
+                    return std::unexpected(ok.error());
+            }
+
+            return reinterpret_cast<LPVOID>(free_slot_aligned);
+        }
+
+        // commits 'capacity' bytes and doubles capacity
+        std::expected<void, MemoryAllocationError> resize_memory() {
+            if (!enough_memory_for_reserve()) [[unlikely]]
+                return std::unexpected(MemoryAllocationError::OutOfMemory);
+
+            LPVOID ok = VirtualAlloc(
+                reinterpret_cast<LPVOID>(memory + capacity),
+                capacity,
+                MEM_COMMIT,
+                PAGE_READWRITE
+            );
+
+            if (!ok) [[unlikely]]
+                return std::unexpected(MemoryAllocationError::BadAllocation);
+
+            capacity *= 2;
+
+            return{};
+        }
+
+        bool enough_memory_for_commit(uintptr_t address, size_t size) const noexcept {        // checks if enough memory exists in the committed amount
+            return address + size < memory + capacity;
+        }
+
+        bool enough_memory_for_reserve() const noexcept {       // checks if theres enough memory reserve
+            if (capacity * 2 > ALLOCATOR_RESERVE_SIZE) [[unlikely]]
+                return false;
+            else [[likely]]
+                return true;
         }
     };
 }
