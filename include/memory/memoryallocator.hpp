@@ -26,12 +26,13 @@ namespace memoryallocator {
     protected:
         virtual std::expected<LPVOID, MemoryAllocationError> alloc(size_t bytes, short alignment) = 0;
         virtual void dealloc(LPVOID pointer) = 0;
+    public:
         virtual ~IAllocator() = default;
     };
 
     class ArenaAllocator : public IAllocator {
     public:
-        explicit ArenaAllocator()
+        ArenaAllocator()
             : capacity(ALLOCATOR_COMMIT_SIZE) {
             // reserves a huge amount of contigous memory totaling 16GB
             memory = reinterpret_cast<uintptr_t>(VirtualAlloc(
@@ -57,27 +58,8 @@ namespace memoryallocator {
             free_slot = memory;
         }
 
-        template<typename T = void>
-        std::expected<T*, MemoryAllocationError> allocate(size_t amount) noexcept {
-            short alignment = alignof(T);
-            size_t byte_count = sizeof(T) * amount;
-            auto allocated_memory = alloc(byte_count, alignment);
-
-            if (!allocated_memory) [[unlikely]]
-                return std::unexpected(allocated_memory.error());
-            else [[likely]]
-                return allocated_memory.value();
-        }
-
-    private:
-        uintptr_t memory;           // the address where the reserve starts
-        uintptr_t free_slot;        // pointer to the next free slot
-        size_t capacity;            // how many bytes fit in the current committed amount
-        size_t size;                // how many bytes were allocated
-        DestructorNodeBase* recent_obj_node = nullptr;        // most recent node holding an allocated object
-
         ~ArenaAllocator() override {
-            // delete all allocated trivially destructible objects
+        // delete all allocated trivially destructible objects
             while (recent_obj_node != nullptr) {
                 DestructorNodeBase* temporary_previous = recent_obj_node->previous;
                 recent_obj_node->~DestructorNodeBase();
@@ -91,13 +73,24 @@ namespace memoryallocator {
             );
         }
 
+        template<typename T = void>
+        std::expected<T*, MemoryAllocationError> allocate(size_t amount) noexcept {
+            short alignment = alignof(T);
+            size_t byte_count = sizeof(T) * amount;
+            auto allocated_memory = alloc(byte_count, alignment);
+
+            if (!allocated_memory) [[unlikely]]
+                return std::unexpected(allocated_memory.error());
+            else [[likely]]
+                return allocated_memory.value();
+        }
+
         // allocates memory and constructs 'Count' objects (accepts constructor arguments)
         template <typename T, typename... Args>
         std::expected<T*, MemoryAllocationError> construct_resource(size_t count, Args&&... args) noexcept {
             if (count < 1) [[unlikely]]
                 return std::unexpected(MemoryAllocationError::BadAllocation);
 
-            short alignment = alignof(T);
             auto allocated_memory = allocate<T>(count);
 
             if (!allocated_memory) [[unlikely]]
@@ -106,7 +99,7 @@ namespace memoryallocator {
             T* constructed_address = reinterpret_cast<T*>(allocated_memory.value());
 
             for (auto i{0uz}; i < count; ++i) {
-                new (constructed_address + i) T(std::forward<Args>(args...));
+                new (constructed_address + i) T(std::forward<Args>(args)...);
             }
 
             // check if the allocated object is not trivially destructible
@@ -125,6 +118,13 @@ namespace memoryallocator {
 
             return constructed_address;
         }
+
+    private:
+        uintptr_t memory;           // the address where the reserve starts
+        uintptr_t free_slot;        // pointer to the next free slot
+        size_t capacity;            // how many bytes fit in the current committed amount
+        size_t size;                // how many bytes were allocated
+        DestructorNodeBase* recent_obj_node = nullptr;        // most recent node holding an allocated object
 
         std::expected<LPVOID, MemoryAllocationError> alloc(size_t bytes, short alignment) noexcept override {
             uintptr_t free_slot_aligned = utility::align_up(free_slot, alignment);
@@ -170,5 +170,7 @@ namespace memoryallocator {
             else [[likely]]
                 return true;
         }
+
+        void dealloc(LPVOID ptr) override {}
     };
 }
