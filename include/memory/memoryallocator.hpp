@@ -97,32 +97,33 @@ namespace memoryallocator {
             if (count < 1) [[unlikely]]
                 return std::unexpected(MemoryAllocationError::BadAllocation);
 
+            short alignment = alignof(T);
             auto allocated_memory = allocate<T>(count);
 
             if (!allocated_memory) [[unlikely]]
                 return std::unexpected(MemoryAllocationError::BadAllocation);
 
+            T* constructed_address = reinterpret_cast<T*>(allocated_memory.value());
+
             for (auto i{0uz}; i < count; ++i) {
-                new (allocated_memory.value() + i) T(args...);
+                new (constructed_address + i) T(std::forward<Args>(args...));
             }
 
-            // check if the allocated object is trivially destructible
-            if constexpr (std::is_trivially_destructible_v<T>) {
-                return allocated_memory.value();
-            } else {
-                // if not it's an object that should be destructed
+            // check if the allocated object is not trivially destructible
+            if constexpr (!std::is_trivially_destructible_v<T>) {
                 auto node_allocated = allocate<DestructorNode<T>>(1);
 
                 if (!node_allocated) [[unlikely]]
                     return std::unexpected(MemoryAllocationError::BadAllocation);
 
-                DestructorNodeBase* node = new (node_allocated.value()) DestructorNode<T>(allocated_memory.value(), count);
+                DestructorNodeBase* node_pointer = reinterpret_cast<DestructorNodeBase*>(node_allocated.value());
+                DestructorNodeBase* node = new (node_pointer) DestructorNode<T>(constructed_address, count);
                 node->previous = recent_obj_node;
 
                 recent_obj_node = node;
-
-                return allocated_memory.value();
             }
+
+            return constructed_address;
         }
 
         std::expected<LPVOID, MemoryAllocationError> alloc(size_t bytes, short alignment) noexcept override {
