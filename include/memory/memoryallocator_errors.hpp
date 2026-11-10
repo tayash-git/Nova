@@ -1,9 +1,11 @@
 #pragma once
 
 namespace memoryallocator {
-    enum class MemoryAllocationError {
+    enum class MemoryError {
         BadAllocation,
         BadDelete,
-        OutOfMemory
+        OutOfMemory,
+        BadAccess,
+        OutOfBounds
     };
 }

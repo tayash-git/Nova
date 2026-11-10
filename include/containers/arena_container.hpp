@@ -10,6 +10,8 @@ namespace containers {
     class ArenaVector {
     private:
         std::unique_ptr<memoryallocator::ArenaAllocator> allocator;
+        T* base = nullptr;              // where the first element lives
+        size_t count = 0;               // amount of elements
 
     public:
         ArenaVector() {
@@ -17,7 +19,7 @@ namespace containers {
         }
 
         template <typename... Args>
-        std::expected<QWORD, memoryallocator::MemoryAllocationError> push_back(T resource, Args&&... args) {
+        std::expected<QWORD, memoryallocator::MemoryError> push_back(T resource, Args&&... args) {
             auto allocated_memory = allocator->construct_resource<T>(1, std::forward<Args>(args)...);
 
             if (!allocated_memory)
@@ -26,8 +28,11 @@ namespace containers {
             return allocated_memory.value();
         }
 
-        T operator[](QWORD i) {
-             // implement indexing from the allocator to return a value
+        std::expected<T, memoryallocator::MemoryError> operator[](QWORD i) {
+             if (i < 0 || i > count - 1) [[unlikely]]
+                 return std::unexpected(memoryallocator::MemoryError::OutOfBounds);
+
+             return base[i];
         }
     };
 }

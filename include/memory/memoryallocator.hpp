@@ -24,7 +24,7 @@ using namespace config;
 namespace memoryallocator {
     class IAllocator {
     protected:
-        virtual std::expected<LPVOID, MemoryAllocationError> alloc(size_t bytes, short alignment) = 0;
+        virtual std::expected<LPVOID, MemoryError> alloc(size_t bytes, short alignment) = 0;
         virtual void dealloc(LPVOID pointer) = 0;
     public:
         virtual ~IAllocator() = default;
@@ -74,7 +74,7 @@ namespace memoryallocator {
         }
 
         template<typename T = void>
-        std::expected<T*, MemoryAllocationError> allocate(size_t amount) noexcept {
+        std::expected<T*, MemoryError> allocate(size_t amount) noexcept {
             short alignment = alignof(T);
             size_t byte_count = sizeof(T) * amount;
             auto allocated_memory = alloc(byte_count, alignment);
@@ -87,14 +87,14 @@ namespace memoryallocator {
 
         // allocates memory and constructs 'Count' objects (accepts constructor arguments)
         template <typename T, typename... Args>
-        std::expected<T*, MemoryAllocationError> construct_resource(size_t count, Args&&... args) noexcept {
+        std::expected<T*, MemoryError> construct_resource(size_t count, Args&&... args) noexcept {
             if (count < 1) [[unlikely]]
-                return std::unexpected(MemoryAllocationError::BadAllocation);
+                return std::unexpected(MemoryError::BadAllocation);
 
             auto allocated_memory = allocate<T>(count);
 
             if (!allocated_memory) [[unlikely]]
-                return std::unexpected(MemoryAllocationError::BadAllocation);
+                return std::unexpected(MemoryError::BadAllocation);
 
             T* constructed_address = reinterpret_cast<T*>(allocated_memory.value());
 
@@ -107,7 +107,7 @@ namespace memoryallocator {
                 auto node_allocated = allocate<DestructorNode<T>>(1);
 
                 if (!node_allocated) [[unlikely]]
-                    return std::unexpected(MemoryAllocationError::BadAllocation);
+                    return std::unexpected(MemoryError::BadAllocation);
 
                 DestructorNodeBase* node_pointer = reinterpret_cast<DestructorNodeBase*>(node_allocated.value());
                 DestructorNodeBase* node = new (node_pointer) DestructorNode<T>(constructed_address, count);
@@ -126,7 +126,7 @@ namespace memoryallocator {
         size_t size;                // how many bytes were allocated
         DestructorNodeBase* recent_obj_node = nullptr;        // most recent node holding an allocated object
 
-        std::expected<LPVOID, MemoryAllocationError> alloc(size_t bytes, short alignment) noexcept override {
+        std::expected<LPVOID, MemoryError> alloc(size_t bytes, short alignment) noexcept override {
             uintptr_t free_slot_aligned = utility::align_up(free_slot, alignment);
 
             // attempt to resize memory if there's not enough
@@ -141,9 +141,9 @@ namespace memoryallocator {
         }
 
         // commits 'capacity' bytes and doubles capacity
-        std::expected<void, MemoryAllocationError> resize_memory() noexcept {
+        std::expected<void, MemoryError> resize_memory() noexcept {
             if (!enough_memory_for_reserve()) [[unlikely]]
-                return std::unexpected(MemoryAllocationError::OutOfMemory);
+                return std::unexpected(MemoryError::OutOfMemory);
 
             LPVOID ok = VirtualAlloc(
                 reinterpret_cast<LPVOID>(memory + capacity),
@@ -153,7 +153,7 @@ namespace memoryallocator {
             );
 
             if (!ok) [[unlikely]]
-                return std::unexpected(MemoryAllocationError::BadAllocation);
+                return std::unexpected(MemoryError::BadAllocation);
 
             capacity *= 2;
 
