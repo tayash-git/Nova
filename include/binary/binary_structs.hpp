@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../containers/arena_container.hpp"
+#include <memory>
 #include <minwindef.h>
 #include <winnt.h>
 #include <vector>
@@ -15,14 +16,20 @@ namespace binary_structs {
 
     struct SectionStructure {
         std::string name;
-        containers::ArenaVector<uint8_t> data;
-        containers::ArenaVector<IMAGE_RELOCATION> relocations;
+        std::shared_ptr<containers::ArenaVector<uint8_t>> data;
+        std::shared_ptr<containers::ArenaVector<IMAGE_RELOCATION>> relocations;
         DWORD characteristics;
+        bool image_relocation_active;
+
+        SectionStructure() = default;
+
+        SectionStructure(SectionStructure&& target_section) 
+            : name(std::move(target_section.name)), data(std::move(target_section.data)), relocations(std::move(target_section.relocations)) {}
     };
 
     struct ObjectFile {
-        containers::ArenaVector<SectionStructure> sections;
-        containers::ArenaVector<IMAGE_SYMBOL> symbol_table;
+        std::shared_ptr<containers::ArenaVector<SectionStructure>> sections;
+        std::shared_ptr<containers::ArenaVector<IMAGE_SYMBOL>> symbol_table;
         std::vector<unsigned char> string_table;
 
         ObjectFile(ObjectFile&& object_to_move)

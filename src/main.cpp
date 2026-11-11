@@ -1,7 +1,80 @@
-#include <iostream>
+#include <memory>
+#include <windows.h>
+#include <winnt.h>
+
+#include "../include/binary/coff/coff_generator.hpp"
+#include "../include/binary/binary_structs.hpp"
+#include "../include/containers/arena_container.hpp"
+
+using namespace binary_structs;
+using namespace coff_generator;
+using namespace containers;
+
+uint8_t code[] = {
+    0x48, 0x83, 0xEC, 0x28,
+
+    0xB9, 0xF5, 0xFF, 0xFF, 0xFF,
+
+    // mov rax, GetStdHandle
+    0x48, 0xB8,
+    0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00,
+
+    0xFF, 0xD0,                   // call rax
+
+    0x48, 0x89, 0xC1,             // mov rcx, rax
+
+    // mov rdx, msg
+    0x48, 0xBA,
+    0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00,
+
+    0x41, 0xB8, 0x0E, 0x00, 0x00, 0x00,
+
+    // mov r9, written
+    0x49, 0xB9,
+    0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00,
+
+    0x48, 0xC7, 0x44, 0x24, 0x20,
+    0x00, 0x00, 0x00, 0x00,
+
+    // mov rax, WriteConsoleA
+    0x48, 0xB8,
+    0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00,
+
+    0xFF, 0xD0,                   // call rax
+
+    0x31, 0xC0,
+    0x48, 0x83, 0xC4, 0x28,
+    0xC3
+};
+
+
+uint8_t data_dat[] = {
+    0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x20, 0x57,
+    0x6F, 0x72, 0x6C, 0x64, 0x21, 0x0D, 0x0A,
+    0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00
+};
 
 int main()
 {
+    auto code_data_vector = std::make_shared<ArenaVector<uint8_t>>();
+    auto data_data_vector = std::make_shared<ArenaVector<uint8_t>>();
+    code_data_vector->insert_at_end(code, 77);
+    data_data_vector->insert_at_end(data_dat, 20);
 
+    ArenaVector<IMAGE_RELOCATION> relocation_code;
+    IMAGE_RELOCATION relocationcode{};
+
+    ArenaVector<SectionStructure> sections;
+
+    SectionStructure code_section;
+    code_section.name = ".text";
+    code_section.image_relocation_active = true;
+    code_section.data = code_data_vector;
+    code_section.relocations = relocation_code;
     return 0;
 }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
@@ -17,7 +18,7 @@
 #include "memoryallocator_errors.hpp"
 #include "memoryallocator_object_tracker.hpp"
 
-// Switching to VirtualAlloc later on to allow for committing and reserving memory giving more control.
+// Switching to using a shared pointer instead of a raw uintptr_t for the base memory (this is for copy constructors)
 
 using namespace config;
 
@@ -58,6 +59,18 @@ namespace memoryallocator {
             free_slot = memory;
         }
 
+        ArenaAllocator(ArenaAllocator& copy_allocator) = delete; // prevent copying due to unique ownership
+
+        ArenaAllocator(ArenaAllocator&& move_allocator)
+            : memory(move_allocator.memory), free_slot(move_allocator.free_slot), capacity(move_allocator.capacity),
+            size(move_allocator.size), recent_obj_node(move_allocator.recent_obj_node) {
+                move_allocator.memory = NULL;
+                move_allocator.free_slot = NULL;
+                move_allocator.capacity = 0;
+                move_allocator.size = 0;
+                move_allocator.recent_obj_node = nullptr;
+            }
+
         ~ArenaAllocator() override {
         // delete all allocated trivially destructible objects
             while (recent_obj_node != nullptr) {
@@ -66,6 +79,9 @@ namespace memoryallocator {
                 recent_obj_node = temporary_previous;
             }
 
+            if (memory == NULL)
+                return;
+
             VirtualFree(
                 reinterpret_cast<LPVOID>(memory),
                 0,
@@ -73,7 +89,7 @@ namespace memoryallocator {
             );
         }
 
-        template<typename T = void>
+        template<typename T>
         std::expected<T*, MemoryError> allocate(size_t amount) noexcept {
             short alignment = alignof(T);
             size_t byte_count = sizeof(T) * amount;
@@ -94,7 +110,7 @@ namespace memoryallocator {
             auto allocated_memory = allocate<T>(count);
 
             if (!allocated_memory) [[unlikely]]
-                return std::unexpected(MemoryError::BadAllocation);
+                return std::unexpected(allocated_memory.error());
 
             T* constructed_address = reinterpret_cast<T*>(allocated_memory.value());
 
@@ -107,7 +123,7 @@ namespace memoryallocator {
                 auto node_allocated = allocate<DestructorNode<T>>(1);
 
                 if (!node_allocated) [[unlikely]]
-                    return std::unexpected(MemoryError::BadAllocation);
+                    return std::unexpected(node_allocated.error());
 
                 DestructorNodeBase* node_pointer = reinterpret_cast<DestructorNodeBase*>(node_allocated.value());
                 DestructorNodeBase* node = new (node_pointer) DestructorNode<T>(constructed_address, count);
@@ -119,10 +135,10 @@ namespace memoryallocator {
             return constructed_address;
         }
 
-        const uintptr_t get_pointer() const { return memory; }
+        const void* get_pointer() const { return memory.get(); }
 
     private:
-        uintptr_t memory;           // the address where the reserve starts
+        std::shared_ptr<void> memory;           // the address where the reserve starts
         uintptr_t free_slot;        // pointer to the next free slot
         size_t capacity;            // how many bytes fit in the current committed amount
         size_t size;                // how many bytes were allocated
@@ -148,7 +164,7 @@ namespace memoryallocator {
                 return std::unexpected(MemoryError::OutOfMemory);
 
             LPVOID ok = VirtualAlloc(
-                reinterpret_cast<LPVOID>(memory + capacity),
+                reinterpret_cast<LPVOID>(memory.get() + capacity),
                 capacity,
                 MEM_COMMIT,
                 PAGE_READWRITE

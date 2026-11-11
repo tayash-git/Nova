@@ -5,6 +5,7 @@
 #include <functional>
 #include <malloc.h>
 #include <memory>
+#include <utility>
 
 namespace containers {
     template <typename T>
@@ -28,23 +29,46 @@ namespace containers {
             count = move_vector.count;
         }
 
-        // constructs a resource and returns an index to it
-        template <typename... Args>
-        std::expected<uint64_t, memoryallocator::MemoryError> push_back(T resource, Args&&... args) {
-            auto allocated_memory = allocator->construct_resource<T>(1, std::forward<Args>(args)...);
+        // copies a resource into the vector
+        std::expected<uint64_t, memoryallocator::MemoryError> push_back(T& resource) noexcept {
+            auto allocated_memory = allocator->allocate<T>(1);
 
             if (!allocated_memory)
                 return std::unexpected(allocated_memory.error());
 
-            if (allocated_memory.value() == nullptr)
-                return std::unexpected(memoryallocator::MemoryError::BadAllocation);
+            T* copied_object = new (allocated_memory) T(resource);
 
             uint64_t index = reinterpret_cast<uint64_t>(allocated_memory.value()) - reinterpret_cast<uint64_t>(base);
             return index;
         }
 
+        // copies a resource into the vector
+        std::expected<uint64_t, memoryallocator::MemoryError> push_back(T&& resource) noexcept {
+            auto allocated_memory = allocator->allocate<T>(1);
+
+            if (!allocated_memory)
+                return std::unexpected(allocated_memory.error());
+
+            T* target = new (allocated_memory) T(resource);
+
+            uint64_t index = reinterpret_cast<uint64_t>(allocated_memory.value()) - reinterpret_cast<uint64_t>(base);
+            return index;
+        }
+
+        // unsafe
+        std::expected<void, memoryallocator::MemoryError> insert_at_end(T* array, size_t amount) noexcept {
+            auto allocated_memory = allocator->allocate<T>(amount);
+
+            if (!allocated_memory)
+                return std::unexpected(allocated_memory.error());
+
+            memcpy(allocated_memory.value(), array, amount);
+        }
+
+        // --------------------------------------------------------------------------------------------------------------------------------
+
         // [] operator overload to index the vector
-        std::expected<std::reference_wrapper<T>, memoryallocator::MemoryError> operator[](size_t i) {
+        std::expected<std::reference_wrapper<T>, memoryallocator::MemoryError> operator[](size_t i) noexcept {
              if (i < 0 || i > count - 1) [[unlikely]]
                  return std::unexpected(memoryallocator::MemoryError::OutOfBounds);
 
@@ -52,7 +76,7 @@ namespace containers {
         }
 
         // [] operator overload to index the vector
-        std::expected<std::reference_wrapper<T>, memoryallocator::MemoryError> operator[](size_t i) const {
+        std::expected<std::reference_wrapper<T>, memoryallocator::MemoryError> operator[](size_t i) const noexcept {
              if (i < 0 || i > count - 1) [[unlikely]]
                  return std::unexpected(memoryallocator::MemoryError::OutOfBounds);
 
