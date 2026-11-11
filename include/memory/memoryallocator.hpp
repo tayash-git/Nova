@@ -119,6 +119,8 @@ namespace memoryallocator {
             return constructed_address;
         }
 
+        const uintptr_t get_pointer() const { return memory; }
+
     private:
         uintptr_t memory;           // the address where the reserve starts
         uintptr_t free_slot;        // pointer to the next free slot

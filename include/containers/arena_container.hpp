@@ -2,6 +2,7 @@
 
 #include "../memory/memoryallocator.hpp"
 #include <expected>
+#include <functional>
 #include <malloc.h>
 #include <memory>
 
@@ -15,7 +16,8 @@ namespace containers {
     public:
         size_t count = 0;               // amount of elements
         ArenaVector()
-            : allocator(std::make_unique<memoryallocator::ArenaAllocator>()) {}
+            : allocator(std::make_unique<memoryallocator::ArenaAllocator>()),
+            base(reinterpret_cast<T*>(allocator->get_pointer())) {}
 
         ArenaVector(ArenaVector&& move_vector) {
             if (!move_vector.allocator)
@@ -23,7 +25,7 @@ namespace containers {
 
             allocator = std::move(move_vector.allocator);
             base = move_vector.base;
-            count = move_vector.base;
+            count = move_vector.count;
         }
 
         // constructs a resource and returns an index to it
@@ -42,11 +44,24 @@ namespace containers {
         }
 
         // [] operator overload to index the vector
-        std::expected<T, memoryallocator::MemoryError> operator[](QWORD i) {
+        std::expected<std::reference_wrapper<T>, memoryallocator::MemoryError> operator[](size_t i) {
              if (i < 0 || i > count - 1) [[unlikely]]
                  return std::unexpected(memoryallocator::MemoryError::OutOfBounds);
 
              return base[i];
         }
+
+        // [] operator overload to index the vector
+        std::expected<std::reference_wrapper<T>, memoryallocator::MemoryError> operator[](size_t i) const {
+             if (i < 0 || i > count - 1) [[unlikely]]
+                 return std::unexpected(memoryallocator::MemoryError::OutOfBounds);
+
+             return base[i];
+        }
+
+        T* begin() { return base; };
+        T* end() { return base + count; }
+        const T* begin() const { return base; }
+        const T* end() const { return base + count; }
     };
 }
