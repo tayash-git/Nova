@@ -34,7 +34,7 @@ namespace memoryallocator {
     class ArenaAllocator : public IAllocator {
     public:
         ArenaAllocator()
-            : capacity(ALLOCATOR_COMMIT_SIZE) {
+            : capacity(ALLOCATOR_COMMIT_SIZE), ref_count(std::make_shared<size_t>(1)) {
             // reserves a huge amount of contigous memory totaling 16GB
             memory = reinterpret_cast<uintptr_t>(VirtualAlloc(
                 NULL,
@@ -59,11 +59,16 @@ namespace memoryallocator {
             free_slot = memory;
         }
 
-        ArenaAllocator(ArenaAllocator& copy_allocator) = delete; // prevent copying due to unique ownership
+        // copies values and increases the reference counter
+        ArenaAllocator(ArenaAllocator& copy_allocator) 
+            : memory(copy_allocator.memory), free_slot(copy_allocator.free_slot),
+            size(copy_allocator.size), capacity(copy_allocator.capacity) {
+            ++(*ref_count);
+        }
 
         ArenaAllocator(ArenaAllocator&& move_allocator)
             : memory(move_allocator.memory), free_slot(move_allocator.free_slot), capacity(move_allocator.capacity),
-            size(move_allocator.size), recent_obj_node(move_allocator.recent_obj_node) {
+            size(move_allocator.size), recent_obj_node(move_allocator.recent_obj_node), ref_count(std::move(move_allocator.ref_count)) {
                 move_allocator.memory = NULL;
                 move_allocator.free_slot = NULL;
                 move_allocator.capacity = 0;
@@ -71,8 +76,11 @@ namespace memoryallocator {
                 move_allocator.recent_obj_node = nullptr;
             }
 
+        // release all resources if there are no more references
         ~ArenaAllocator() override {
-        // delete all allocated trivially destructible objects
+            if (--(*ref_count) > 0)
+                return;
+
             while (recent_obj_node != nullptr) {
                 DestructorNodeBase* temporary_previous = recent_obj_node->previous;
                 recent_obj_node->~DestructorNodeBase();
@@ -135,14 +143,15 @@ namespace memoryallocator {
             return constructed_address;
         }
 
-        const void* get_pointer() const { return memory.get(); }
+        const uintptr_t get_pointer() const { return memory; }
 
     private:
-        std::shared_ptr<void> memory;           // the address where the reserve starts
+        uintptr_t memory;           // the address where the reserve starts
         uintptr_t free_slot;        // pointer to the next free slot
         size_t capacity;            // how many bytes fit in the current committed amount
         size_t size;                // how many bytes were allocated
-        DestructorNodeBase* recent_obj_node = nullptr;        // most recent node holding an allocated object
+        std::shared_ptr<size_t> ref_count;                      // how many references to the allocator (used for destructors)
+        DestructorNodeBase* recent_obj_node = nullptr;          // most recent node holding an allocated object
 
         std::expected<LPVOID, MemoryError> alloc(size_t bytes, short alignment) noexcept override {
             uintptr_t free_slot_aligned = utility::align_up(free_slot, alignment);
@@ -164,7 +173,7 @@ namespace memoryallocator {
                 return std::unexpected(MemoryError::OutOfMemory);
 
             LPVOID ok = VirtualAlloc(
-                reinterpret_cast<LPVOID>(memory.get() + capacity),
+                reinterpret_cast<LPVOID>(memory + capacity),
                 capacity,
                 MEM_COMMIT,
                 PAGE_READWRITE

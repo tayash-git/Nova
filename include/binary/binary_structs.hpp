@@ -16,8 +16,8 @@ namespace binary_structs {
 
     struct SectionStructure {
         std::string name;
-        std::shared_ptr<containers::ArenaVector<uint8_t>> data;
-        std::shared_ptr<containers::ArenaVector<IMAGE_RELOCATION>> relocations;
+        containers::ArenaVector<uint8_t> data;
+        containers::ArenaVector<IMAGE_RELOCATION> relocations;
         DWORD characteristics;
         bool image_relocation_active;
 
@@ -28,8 +28,8 @@ namespace binary_structs {
     };
 
     struct ObjectFile {
-        std::shared_ptr<containers::ArenaVector<SectionStructure>> sections;
-        std::shared_ptr<containers::ArenaVector<IMAGE_SYMBOL>> symbol_table;
+        containers::ArenaVector<SectionStructure> sections;
+        containers::ArenaVector<IMAGE_SYMBOL> symbol_table;
         std::vector<unsigned char> string_table;
 
         ObjectFile(ObjectFile&& object_to_move)

@@ -61,10 +61,11 @@ uint8_t data_dat[] = {
 
 int main()
 {
-    auto code_data_vector = std::make_shared<ArenaVector<uint8_t>>();
-    auto data_data_vector = std::make_shared<ArenaVector<uint8_t>>();
-    code_data_vector->insert_at_end(code, 77);
-    data_data_vector->insert_at_end(data_dat, 20);
+    ArenaVector<uint8_t> code_data_vector;
+    ArenaVector<uint8_t> data_data_vector;
+
+    code_data_vector.insert_at_end(code, 77);
+    data_data_vector.insert_at_end(data_dat, 20);
 
     ArenaVector<IMAGE_RELOCATION> relocation_code;
     IMAGE_RELOCATION relocationcode{};
@@ -74,7 +75,7 @@ int main()
     SectionStructure code_section;
     code_section.name = ".text";
     code_section.image_relocation_active = true;
-    code_section.data = code_data_vector;
-    code_section.relocations = relocation_code;
+    code_section.data = std::move(code_data_vector);
+    code_section.relocations = std::move(relocation_code);
     return 0;
 }
