@@ -1,7 +1,6 @@
 #pragma once
 
 #include "../containers/arena_container.hpp"
-#include <memory>
 #include <minwindef.h>
 #include <winnt.h>
 #include <vector>

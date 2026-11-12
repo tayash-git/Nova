@@ -72,7 +72,7 @@ int main()
 
     ArenaVector<SectionStructure> sections;
 
-    SectionStructure code_section;
+    SectionStructure code_section{};
     code_section.name = ".text";
     code_section.image_relocation_active = true;
     code_section.data = std::move(code_data_vector);

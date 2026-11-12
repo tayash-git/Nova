@@ -1,10 +1,9 @@
 #pragma once
 
-#include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <iostream>
 #include <memory.h>
 #include <memory>
 #include <memoryapi.h>
@@ -34,7 +33,7 @@ namespace memoryallocator {
     class ArenaAllocator : public IAllocator {
     public:
         ArenaAllocator()
-            : capacity(ALLOCATOR_COMMIT_SIZE), ref_count(std::make_shared<size_t>(1)) {
+            : capacity(ALLOCATOR_COMMIT_SIZE), ref_count(std::make_shared<int8_t>(0)) {
             // reserves a huge amount of contigous memory totaling 16GB
             memory = reinterpret_cast<uintptr_t>(VirtualAlloc(
                 NULL,
@@ -46,7 +45,7 @@ namespace memoryallocator {
             if (!memory) [[unlikely]]
                 throw std::runtime_error("bad reserve in ArenaAllocator : IAllocator constructor\n");
 
-            auto ok = VirtualAlloc(
+            LPVOID ok = VirtualAlloc(
                 reinterpret_cast<LPVOID>(memory),
                 ALLOCATOR_COMMIT_SIZE,
                 MEM_COMMIT,
@@ -62,7 +61,7 @@ namespace memoryallocator {
         // copies values and increases the reference counter
         ArenaAllocator(ArenaAllocator& copy_allocator) 
             : memory(copy_allocator.memory), free_slot(copy_allocator.free_slot),
-            size(copy_allocator.size), capacity(copy_allocator.capacity) {
+            size(copy_allocator.size), capacity(copy_allocator.capacity), ref_count(copy_allocator.ref_count) {
             ++(*ref_count);
         }
 
@@ -74,6 +73,8 @@ namespace memoryallocator {
                 move_allocator.capacity = 0;
                 move_allocator.size = 0;
                 move_allocator.recent_obj_node = nullptr;
+
+                ref_count.reset();
             }
 
         // release all resources if there are no more references
@@ -150,7 +151,7 @@ namespace memoryallocator {
         uintptr_t free_slot;        // pointer to the next free slot
         size_t capacity;            // how many bytes fit in the current committed amount
         size_t size;                // how many bytes were allocated
-        std::shared_ptr<size_t> ref_count;                      // how many references to the allocator (used for destructors)
+        std::shared_ptr<int8_t> ref_count;                        // how many references to the allocator (used for destructors)
         DestructorNodeBase* recent_obj_node = nullptr;          // most recent node holding an allocated object
 
         std::expected<LPVOID, MemoryError> alloc(size_t bytes, short alignment) noexcept override {

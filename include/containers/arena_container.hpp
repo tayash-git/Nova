@@ -20,13 +20,11 @@ namespace containers {
             : allocator(std::make_unique<memoryallocator::ArenaAllocator>()),
             base(reinterpret_cast<T*>(allocator->get_pointer())) {}
 
-        ArenaVector(ArenaVector&& move_vector) {
-            if (!move_vector.allocator)
-                return;
+        ArenaVector(ArenaVector&) = delete;
 
-            allocator = std::move(move_vector.allocator);
-            base = move_vector.base;
-            count = move_vector.count;
+        ArenaVector(ArenaVector&& move_vector) 
+            : allocator(std::move(move_vector.allocator)), base(move_vector.base), count(move_vector.count) {
+            base = nullptr;
         }
 
         // copies a resource into the vector
@@ -81,6 +79,13 @@ namespace containers {
                  return std::unexpected(memoryallocator::MemoryError::OutOfBounds);
 
              return base[i];
+        }
+
+        // move equal expression
+        ArenaVector& operator=(ArenaVector&& vector_target) {
+            allocator = std::move(vector_target.allocator);
+            base = vector_target.base;
+            count = vector_target.count;
         }
 
         T* begin() { return base; };
