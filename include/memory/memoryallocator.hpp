@@ -32,76 +32,20 @@ namespace memoryallocator {
 
     class ArenaAllocator : public IAllocator {
     public:
-        ArenaAllocator()
-            : capacity(ALLOCATOR_COMMIT_SIZE), ref_count(std::make_shared<int8_t>(0)) {
-            // reserves a huge amount of contigous memory totaling 16GB
-            memory = reinterpret_cast<uintptr_t>(VirtualAlloc(
-                NULL,
-                ALLOCATOR_RESERVE_SIZE,
-                MEM_RESERVE,
-                PAGE_NOACCESS
-            ));
+        ArenaAllocator();
 
-            if (!memory) [[unlikely]]
-                throw std::runtime_error("bad reserve in ArenaAllocator : IAllocator constructor\n");
+        ArenaAllocator(ArenaAllocator& copy_allocator);
+        ArenaAllocator(ArenaAllocator&& moved_allocator);
+        ~ArenaAllocator() override;
 
-            LPVOID ok = VirtualAlloc(
-                reinterpret_cast<LPVOID>(memory),
-                ALLOCATOR_COMMIT_SIZE,
-                MEM_COMMIT,
-                PAGE_READWRITE
-            );
+        // allocates memory without constructing an object
+        template<typename T, size_t count = 1>
+        [[using gnu: malloc, hot]] T* allocate() noexcept {
+            static_assert(count > 0, "count must be greater than 0");
+            [[assume(count > 0)]];
 
-            if (!ok) [[unlikely]]
-                throw std::runtime_error("bad commit in ArenaAllocator : IAllocator constructor\n");
-
-            free_slot = memory;
-        }
-
-        // copies values and increases the reference counter
-        ArenaAllocator(ArenaAllocator& copy_allocator) 
-            : memory(copy_allocator.memory), free_slot(copy_allocator.free_slot),
-            size(copy_allocator.size), capacity(copy_allocator.capacity), ref_count(copy_allocator.ref_count) {
-            ++(*ref_count);
-        }
-
-        ArenaAllocator(ArenaAllocator&& move_allocator)
-            : memory(move_allocator.memory), free_slot(move_allocator.free_slot), capacity(move_allocator.capacity),
-            size(move_allocator.size), recent_obj_node(move_allocator.recent_obj_node), ref_count(std::move(move_allocator.ref_count)) {
-                move_allocator.memory = NULL;
-                move_allocator.free_slot = NULL;
-                move_allocator.capacity = 0;
-                move_allocator.size = 0;
-                move_allocator.recent_obj_node = nullptr;
-
-                ref_count.reset();
-            }
-
-        // release all resources if there are no more references
-        ~ArenaAllocator() override {
-            if (--(*ref_count) > 0)
-                return;
-
-            while (recent_obj_node != nullptr) {
-                DestructorNodeBase* temporary_previous = recent_obj_node->previous;
-                recent_obj_node->~DestructorNodeBase();
-                recent_obj_node = temporary_previous;
-            }
-
-            if (memory == NULL)
-                return;
-
-            VirtualFree(
-                reinterpret_cast<LPVOID>(memory),
-                0,
-                MEM_RELEASE
-            );
-        }
-
-        template<typename T>
-        std::expected<T*, MemoryError> allocate(size_t amount) noexcept {
             short alignment = alignof(T);
-            size_t byte_count = sizeof(T) * amount;
+            size_t byte_count = sizeof(T) * count;
             auto allocated_memory = alloc(byte_count, alignment);
 
             if (!allocated_memory) [[unlikely]]
@@ -111,28 +55,27 @@ namespace memoryallocator {
         }
 
         // allocates memory and constructs 'Count' objects (accepts constructor arguments)
-        template <typename T, typename... Args>
-        std::expected<T*, MemoryError> construct_resource(size_t count, Args&&... args) noexcept {
-            if (count < 1) [[unlikely]]
-                return std::unexpected(MemoryError::BadAllocation);
+        template <typename T, size_t count = 1, typename... Args>
+        [[gnu::malloc]] T* construct_resource(Args&&... args) noexcept {
+            static_assert(count > 0, "count must be greater than 0");
+            [[assume(count > 0)]];
 
-            auto allocated_memory = allocate<T>(count);
+            T* allocated_memory = allocate<T>(count);
 
             if (!allocated_memory) [[unlikely]]
-                return std::unexpected(allocated_memory.error());
+                return nullptr;
 
             T* constructed_address = reinterpret_cast<T*>(allocated_memory.value());
 
-            for (auto i{0uz}; i < count; ++i) {
+            for (auto i{0uz}; i < count; ++i)
                 new (constructed_address + i) T(std::forward<Args>(args)...);
-            }
 
             // check if the allocated object is not trivially destructible
             if constexpr (!std::is_trivially_destructible_v<T>) {
                 auto node_allocated = allocate<DestructorNode<T>>(1);
 
                 if (!node_allocated) [[unlikely]]
-                    return std::unexpected(node_allocated.error());
+                    return nullptr;
 
                 DestructorNodeBase* node_pointer = reinterpret_cast<DestructorNodeBase*>(node_allocated.value());
                 DestructorNodeBase* node = new (node_pointer) DestructorNode<T>(constructed_address, count);
@@ -144,7 +87,7 @@ namespace memoryallocator {
             return constructed_address;
         }
 
-        const uintptr_t get_pointer() const { return memory; }
+        [[maybe_unused]] [[using gnu: always_inline, pure]] inline const uintptr_t get_pointer() const { return memory; }
 
     private:
         uintptr_t memory;           // the address where the reserve starts
