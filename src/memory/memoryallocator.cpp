@@ -1,5 +1,4 @@
-#include <iostream>
-
+#include "../../include/utility.hpp"
 #include "../../include/memory/memoryallocator.hpp"
 
 namespace memoryallocator {
@@ -30,7 +29,7 @@ namespace memoryallocator {
     }
 
     // copies values and increases the reference counter
-    ArenaAllocator::ArenaAllocator(ArenaAllocator& copy_allocator) {
+    ArenaAllocator::ArenaAllocator(ArenaAllocator& copy_allocator)
         : memory(copy_allocator.memory), free_slot(copy_allocator.free_slot),
         size(copy_allocator.size), capacity(copy_allocator.capacity), ref_count(copy_allocator.ref_count) {
         ++(*ref_count);
@@ -46,7 +45,7 @@ namespace memoryallocator {
     }
 
     // release all resources if there are no more references
-    ArenaAllocator::~ArenaAllocator() override {
+    ArenaAllocator::~ArenaAllocator() {
         if (--(*ref_count) > 0)
             return;
 
@@ -64,5 +63,39 @@ namespace memoryallocator {
             0,
             MEM_RELEASE
         );
+    }
+
+    [[using gnu: malloc, hot]] LPVOID ArenaAllocator::alloc(size_t bytes, short alignment) noexcept {
+        uintptr_t free_slot_aligned = utility::align_up(free_slot, alignment);
+
+        // attempt to resize memory if there's not enough
+        while (!enough_memory_for_commit(free_slot_aligned, bytes)) [[unlikely]] {
+            if (auto ok = resize_memory(); !ok) [[unlikely]]
+                return nullptr;
+        }
+
+        free_slot = free_slot_aligned + bytes;
+
+        return reinterpret_cast<LPVOID>(free_slot_aligned);
+    }
+
+    // commits 'capacity' bytes and doubles capacity
+    std::expected<void, MemoryError> ArenaAllocator::resize_memory() noexcept {
+        if (!enough_memory_for_reserve()) [[unlikely]]
+            return std::unexpected(MemoryError::OutOfMemory);
+
+        LPVOID ok = VirtualAlloc(
+            reinterpret_cast<LPVOID>(memory + capacity),
+            capacity,
+            MEM_COMMIT,
+            PAGE_READWRITE
+        );
+
+        if (!ok) [[unlikely]]
+            return std::unexpected(MemoryError::BadAllocation);
+
+        capacity *= 2;
+
+        return{};
     }
 }

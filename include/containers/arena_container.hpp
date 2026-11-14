@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../memory/memoryallocator.hpp"
+#include <cassert>
 #include <expected>
 #include <functional>
 #include <malloc.h>
@@ -66,31 +67,36 @@ namespace containers {
         // --------------------------------------------------------------------------------------------------------------------------------
 
         // [] operator overload to index the vector
-        std::expected<std::reference_wrapper<T>, memoryallocator::MemoryError> operator[](size_t i) noexcept {
-             if (i < 0 || i > count - 1) [[unlikely]]
-                 return std::unexpected(memoryallocator::MemoryError::OutOfBounds);
+        T operator[](size_t i) noexcept {
+            assert(i < count);
+            [[assume(i < count)]];
 
-             return base[i];
+            return base[i];
         }
 
         // [] operator overload to index the vector
-        std::expected<std::reference_wrapper<T>, memoryallocator::MemoryError> operator[](size_t i) const noexcept {
-             if (i < 0 || i > count - 1) [[unlikely]]
-                 return std::unexpected(memoryallocator::MemoryError::OutOfBounds);
+        T operator[](size_t i) const noexcept {
+            assert(i < count);
+            [[assume(i < count)]];
 
-             return base[i];
+            return base[i];
         }
 
         // move equal expression
         ArenaVector& operator=(ArenaVector&& vector_target) {
+            if (&vector_target == this)
+                return *this;
+
             allocator = std::move(vector_target.allocator);
             base = vector_target.base;
             count = vector_target.count;
+
+            return *this;
         }
 
-        T* begin() { return base; };
-        T* end() { return base + count; }
-        const T* begin() const { return base; }
-        const T* end() const { return base + count; }
+        [[gnu::pure]] T* begin() { return base; };
+        [[gnu::pure]] T* end() { return base + count; }
+        [[gnu::pure]] const T* begin() const { return base; }
+        [[gnu::pure]] const T* end() const { return base + count; }
     };
 }

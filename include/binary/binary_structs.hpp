@@ -18,7 +18,7 @@ namespace binary_structs {
         containers::ArenaVector<uint8_t> data;
         containers::ArenaVector<IMAGE_RELOCATION> relocations;
         DWORD characteristics;
-        bool image_relocation_active;
+        bool has_relocation;
 
         SectionStructure() = default;
 
